@@ -1,0 +1,27 @@
+# Enable URL rewriting
+RewriteEngine On
+
+# Allow direct access to image files
+RewriteCond %{REQUEST_FILENAME} -f
+RewriteCond %{REQUEST_URI} \.(jpg|jpeg|png|gif|webp)$ [NC]
+RewriteRule ^.*$ - [L]
+
+# Set proper MIME types for images
+<FilesMatch "\.(jpg|jpeg|png|gif|webp)$">
+    Header set Access-Control-Allow-Origin "*"
+    Header set Cache-Control "public, max-age=31536000"
+</FilesMatch>
+
+# Security: Prevent access to PHP files in uploads directory
+<Directory "uploads">
+    <Files "*.php">
+        Order Deny,Allow
+        Deny from all
+    </Files>
+</Directory>
+
+# Increase upload limits
+php_value upload_max_filesize 10M
+php_value post_max_size 10M
+php_value max_execution_time 300
+php_value max_input_time 300
