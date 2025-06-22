@@ -35,7 +35,47 @@ if (!file_exists($uploadDir)) {
 
 // Handle image management actions
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SESSION['logged_in'])) {
-    // Delete image
+    // Bulk delete images
+    if (isset($_POST['bulk_delete']) && isset($_POST['filenames'])) {
+        $filenames = json_decode($_POST['filenames'], true);
+        $deleted = 0;
+        $failed = 0;
+        $errors = [];
+        
+        if (is_array($filenames)) {
+            foreach ($filenames as $filename) {
+                $imagePath = $uploadDir . basename($filename);
+                
+                if (file_exists($imagePath) && is_file($imagePath)) {
+                    if (unlink($imagePath)) {
+                        $deleted++;
+                    } else {
+                        $failed++;
+                        $errors[] = "Failed to delete: " . $filename;
+                    }
+                } else {
+                    $failed++;
+                    $errors[] = "File not found: " . $filename;
+                }
+            }
+            
+            if ($deleted > 0 && $failed === 0) {
+                $uploadMessage = "Successfully deleted {$deleted} image(s)!";
+            } elseif ($deleted > 0 && $failed > 0) {
+                $uploadMessage = "Deleted {$deleted} image(s), {$failed} failed.";
+            } else {
+                $uploadMessage = "Failed to delete {$failed} image(s).";
+            }
+        } else {
+            $uploadMessage = 'Error: Invalid file list.';
+        }
+        
+        // Redirect to prevent resubmission
+        header('Location: ' . $_SERVER['PHP_SELF']);
+        exit;
+    }
+    
+    // Delete single image
     if (isset($_POST['delete_image'])) {
         $imageToDelete = $_POST['delete_image'];
         $imagePath = $uploadDir . basename($imageToDelete);
@@ -124,6 +164,7 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
                 align-items: center;
                 justify-content: center;
                 padding: 20px;
+                color:rgb(255, 255, 255);
             }
             
             .login-container {
@@ -293,11 +334,17 @@ $uploadStats = ['success' => 0, 'failed' => 0, 'errors' => []];
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['images'])) {
     $files = $_FILES['images'];
     $allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-    $maxFileSize = 5 * 1024 * 1024; // 5MB
+    $maxFileSize = 20 * 1024 * 1024; // 20MB
+    $maxFiles = 100; // Maximum 100 files at once
     
     // Handle multiple files
     if (is_array($files['name'])) {
         $fileCount = count($files['name']);
+        
+        // Check if exceeds maximum file limit
+        if ($fileCount > $maxFiles) {
+            $uploadMessage = "Error: Maximum {$maxFiles} files allowed at once. You selected {$fileCount} files.";
+        } else {
         
         for ($i = 0; $i < $fileCount; $i++) {
             // Skip empty uploads
@@ -355,7 +402,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['images'])) {
             // Move uploaded file
             if (move_uploaded_file($fileTmpName, $targetPath)) {
                 $uploadStats['success']++;
-                $url = 'http://' . $_SERVER['HTTP_HOST'] . dirname($_SERVER['REQUEST_URI']) . '/' . $targetPath;
+                $protocol = 'https';
+                $requestUri = dirname($_SERVER['REQUEST_URI']);
+                if ($requestUri === '/' || $requestUri === '\\') {
+                    $requestUri = '';
+                }
+                $url = $protocol . '://' . $_SERVER['HTTP_HOST'] . $requestUri . '/' . $targetPath;
                 $uploadedUrls[] = $url;
                 
                 // For single file compatibility
@@ -375,6 +427,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['images'])) {
             $uploadMessage = "Uploaded {$uploadStats['success']} image(s), {$uploadStats['failed']} failed. Check details below.";
         } elseif ($uploadStats['failed'] > 0) {
             $uploadMessage = "Failed to upload {$uploadStats['failed']} image(s). Check details below.";
+        }
         }
     } 
     // Handle single file (backward compatibility)
@@ -414,7 +467,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['images'])) {
                 // Move uploaded file
                 if (move_uploaded_file($file['tmp_name'], $targetPath)) {
                     $uploadMessage = 'Image uploaded successfully!';
-                    $uploadedImageUrl = 'http://' . $_SERVER['HTTP_HOST'] . dirname($_SERVER['REQUEST_URI']) . '/' . $targetPath;
+                    $protocol = 'https';
+                    $requestUri = dirname($_SERVER['REQUEST_URI']);
+                    if ($requestUri === '/' || $requestUri === '\\') {
+                        $requestUri = '';
+                    }
+                    $uploadedImageUrl = $protocol . '://' . $_SERVER['HTTP_HOST'] . $requestUri . '/' . $targetPath;
                     $uploadStats['success'] = 1;
                 } else {
                     $uploadMessage = 'Error: Failed to upload image.';
@@ -432,9 +490,14 @@ if (file_exists($uploadDir)) {
     $files = scandir($uploadDir);
     foreach ($files as $file) {
         if ($file !== '.' && $file !== '..' && is_file($uploadDir . $file)) {
+            $protocol = 'https';
+            $requestUri = dirname($_SERVER['REQUEST_URI']);
+            if ($requestUri === '/' || $requestUri === '\\') {
+                $requestUri = '';
+            }
             $uploadedImages[] = [
                 'filename' => $file,
-                'url' => 'http://' . $_SERVER['HTTP_HOST'] . dirname($_SERVER['REQUEST_URI']) . '/' . $uploadDir . $file,
+                'url' => $protocol . '://' . $_SERVER['HTTP_HOST'] . $requestUri . '/' . $uploadDir . $file,
                 'path' => $uploadDir . $file
             ];
         }
@@ -458,110 +521,67 @@ if (file_exists($uploadDir)) {
             padding: 0;
             box-sizing: border-box;
         }
-        
         body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #181a1b;
             min-height: 100vh;
-            padding: 20px;
+            padding: 0;
+            color: #e5e7eb;
         }
-        
         .container {
             max-width: 1200px;
-            margin: 0 auto;
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(15px);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            padding: 40px;
-            border-radius: 25px;
-            box-shadow: 0 25px 50px rgba(0,0,0,0.15);
+            margin: 40px auto;
+            background: #23272a;
+            border: 1px solid #23272a;
+            padding: 32px 32px 40px 32px;
+            border-radius: 18px;
+            box-shadow: 0 4px 32px rgba(0,0,0,0.18);
         }
-        
         h1 {
-            text-align: center;
-            color: rgba(255, 255, 255, 0.95);
-            margin-bottom: 40px;
-            font-size: 2.5rem;
+            text-align: left;
+            color: #f3f4f6;
+            margin-bottom: 32px;
+            font-size: 2.2rem;
             font-weight: 700;
-            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            letter-spacing: -1px;
         }
-        
         .upload-section {
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(20px);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            padding: 40px;
-            border-radius: 20px;
-            margin-bottom: 40px;
+            background: #23272a;
+            border: 1px solid #23272a;
+            padding: 32px;
+            border-radius: 14px;
+            margin-bottom: 32px;
             text-align: center;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.10);
         }
-        
-        .upload-mode-toggle {
-            display: flex;
-            justify-content: center;
-            gap: 10px;
-            margin-bottom: 30px;
-        }
-        
-        .mode-btn {
-            background: rgba(102, 126, 234, 0.1);
-            color: #4a5568;
-            border: 2px solid rgba(102, 126, 234, 0.3);
-            padding: 10px 25px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-weight: 500;
-            transition: all 0.3s ease;
-        }
-        
-        .mode-btn.active {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border-color: #667eea;
-        }
-        
-        .mode-btn:hover:not(.active) {
-            background: rgba(102, 126, 234, 0.2);
-        }
-        
         .upload-form {
             display: flex;
             flex-direction: column;
             align-items: center;
-            gap: 20px;
+            gap: 18px;
         }
-        
         .drag-drop-area {
             width: 100%;
-            max-width: 500px;
-            height: 200px;
-            border: 3px dashed #cbd5e0;
-            border-radius: 16px;
+            max-width: 420px;
+            height: 160px;
+            border: 2px dashed #444950;
+            border-radius: 10px;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
             cursor: pointer;
-            transition: all 0.3s ease;
-            background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+            background: #23272a;
+            color: #e5e7eb;
+            transition: border-color 0.2s, background 0.2s;
             position: relative;
             overflow: hidden;
         }
-        
         .drag-drop-area:hover,
         .drag-drop-area.drag-over {
-            border-color: #667eea;
-            background: linear-gradient(135deg, rgba(102, 126, 234, 0.2) 0%, rgba(118, 75, 162, 0.2) 100%);
-            transform: translateY(-2px);
-            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.3);
+            border-color: #6366f1;
+            background: #181a1b;
         }
-        
-        .drag-drop-area.drag-over {
-            border-color: #48bb78;
-            background: linear-gradient(135deg, rgba(72, 187, 120, 0.2) 0%, rgba(56, 178, 172, 0.2) 100%);
-        }
-        
         .file-input {
             position: absolute;
             width: 100%;
@@ -570,349 +590,303 @@ if (file_exists($uploadDir)) {
             cursor: pointer;
             z-index: 10;
         }
-        
         .upload-icon {
-            font-size: 3rem;
-            color: #667eea;
-            margin-bottom: 15px;
+            font-size: 2.2rem;
+            color: #6366f1;
+            margin-bottom: 10px;
         }
-        
         .upload-text {
-            color: #4a5568;
-            font-size: 1.1rem;
+            color: #e5e7eb;
+            font-size: 1.05rem;
             font-weight: 500;
-            margin-bottom: 5px;
+            margin-bottom: 2px;
         }
-        
         .upload-subtext {
-            color: #718096;
-            font-size: 0.9rem;
+            color: #b0b3b8;
+            font-size: 0.92rem;
         }
-        
         .upload-btn {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 14px 32px;
+            background: #6366f1;
+            color: #fff;
+            padding: 12px 28px;
             border: none;
-            border-radius: 12px;
+            border-radius: 8px;
             cursor: pointer;
-            font-size: 16px;
+            font-size: 1rem;
             font-weight: 600;
-            transition: all 0.3s ease;
-            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+            transition: background 0.2s, box-shadow 0.2s;
+            box-shadow: 0 2px 8px rgba(99,102,241,0.08);
         }
-        
         .upload-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.6);
+            background: #4f46e5;
         }
-        
         .upload-btn:disabled {
             opacity: 0.6;
             cursor: not-allowed;
-            transform: none;
         }
-        
         .progress-bar {
             width: 100%;
-            max-width: 500px;
-            height: 6px;
-            background: #e2e8f0;
+            max-width: 420px;
+            height: 5px;
+            background: #e5e7eb;
             border-radius: 3px;
             overflow: hidden;
-            margin-top: 20px;
+            margin-top: 16px;
             display: none;
         }
-        
         .progress-fill {
             height: 100%;
-            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            background: #6366f1;
             width: 0%;
             transition: width 0.3s ease;
         }
-        
         .message {
-            padding: 16px 24px;
-            margin: 20px 0;
-            border-radius: 12px;
+            padding: 14px 20px;
+            margin: 18px 0;
+            border-radius: 8px;
             text-align: center;
             font-weight: 500;
-            animation: slideIn 0.3s ease;
+            font-size: 1rem;
         }
-        
-        @keyframes slideIn {
-            from { opacity: 0; transform: translateY(-10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        
         .success {
-            background: linear-gradient(135deg, rgba(72, 187, 120, 0.1) 0%, rgba(56, 178, 172, 0.1) 100%);
-            color: #2f855a;
-            border: 1px solid rgba(72, 187, 120, 0.3);
+            background: #e0f7fa;
+            color: #00796b;
+            border: 1px solid #b2dfdb;
         }
-        
         .error {
-            background: linear-gradient(135deg, rgba(245, 101, 101, 0.1) 0%, rgba(237, 100, 166, 0.1) 100%);
+            background: #fff0f0;
             color: #c53030;
-            border: 1px solid rgba(245, 101, 101, 0.3);
+            border: 1px solid #fbb6b6;
         }
-        
         .url-display {
-            background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
-            padding: 20px;
-            border-radius: 12px;
-            margin: 20px 0;
+            background: #f3f4f6;
+            padding: 16px;
+            border-radius: 8px;
+            margin: 18px 0;
             word-break: break-all;
             font-family: 'Monaco', 'Menlo', monospace;
-            border: 1px solid rgba(102, 126, 234, 0.3);
+            border: 1px solid #e5e7eb;
         }
-        
         .copy-btn {
-            background: linear-gradient(135deg, #38b2ac 0%, #319795 100%);
-            color: white;
-            padding: 10px 20px;
+            background: #10b981;
+            color: #fff;
+            padding: 8px 18px;
             border: none;
-            border-radius: 8px;
+            border-radius: 6px;
             cursor: pointer;
-            margin-left: 15px;
+            margin-left: 10px;
             font-weight: 500;
-            transition: all 0.3s ease;
-            box-shadow: 0 2px 8px rgba(56, 178, 172, 0.3);
+            font-size: 0.95rem;
+            transition: background 0.2s;
         }
-        
         .copy-btn:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(56, 178, 172, 0.4);
+            background: #059669;
         }
-        
         .file-info {
             display: none;
-            background: rgba(102, 126, 234, 0.1);
-            padding: 15px;
-            border-radius: 8px;
-            margin-top: 15px;
+            background: #f3f4f6;
+            padding: 10px;
+            border-radius: 7px;
+            margin-top: 10px;
             text-align: left;
-            border: 1px solid rgba(102, 126, 234, 0.2);
+            border: 1px solid #e5e7eb;
         }
-        
         .file-info.show {
             display: block;
-            animation: slideIn 0.3s ease;
         }
-        
         .file-info-item {
             display: flex;
             justify-content: space-between;
-            margin-bottom: 5px;
-            color: #4a5568;
-            font-size: 0.9rem;
+            margin-bottom: 3px;
+            color: #374151;
+            font-size: 0.97rem;
         }
-        
         .selected-files-list {
             width: 100%;
-            max-width: 500px;
-            max-height: 200px;
+            max-width: 420px;
+            max-height: 120px;
             overflow-y: auto;
-            background: rgba(102, 126, 234, 0.05);
-            border-radius: 8px;
-            padding: 10px;
+            background: #f9fafb;
+            border-radius: 7px;
+            padding: 7px;
             display: none;
         }
-        
         .selected-files-list.show {
             display: block;
         }
-        
         .selected-file-item {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 8px;
-            margin-bottom: 5px;
-            background: white;
-            border-radius: 6px;
-            border: 1px solid rgba(102, 126, 234, 0.2);
+            padding: 6px;
+            margin-bottom: 3px;
+            background: #fff;
+            border-radius: 5px;
+            border: 1px solid #e5e7eb;
         }
-        
         .selected-file-info {
             flex: 1;
             text-align: left;
         }
-        
         .selected-file-name {
             font-weight: 500;
-            color: #4a5568;
+            color: #374151;
+            font-size: 0.97rem;
+        }
+        .selected-file-size {
+            color: #6b7280;
             font-size: 0.9rem;
         }
-        
-        .selected-file-size {
-            color: #718096;
-            font-size: 0.8rem;
-        }
-        
         .remove-file-btn {
-            background: #f56565;
-            color: white;
+            background: #ef4444;
+            color: #fff;
             border: none;
-            padding: 4px 8px;
+            padding: 3px 8px;
             border-radius: 4px;
             cursor: pointer;
-            font-size: 0.8rem;
+            font-size: 0.85rem;
         }
-        
         .bulk-urls-display {
-            background: rgba(102, 126, 234, 0.1);
-            padding: 20px;
-            border-radius: 12px;
-            margin: 20px 0;
-            border: 1px solid rgba(102, 126, 234, 0.3);
+            background: #f3f4f6;
+            padding: 16px;
+            border-radius: 8px;
+            margin: 18px 0;
+            border: 1px solid #e5e7eb;
         }
-        
         .bulk-urls-display h4 {
-            color: #4a5568;
-            margin-bottom: 15px;
-            font-size: 1.1rem;
+            color: #374151;
+            margin-bottom: 10px;
+            font-size: 1.05rem;
         }
-        
         .bulk-url-actions {
             display: flex;
-            gap: 10px;
-            margin-bottom: 15px;
+            gap: 8px;
+            margin-bottom: 10px;
             flex-wrap: wrap;
         }
-        
         .urls-list {
-            max-height: 300px;
+            max-height: 180px;
             overflow-y: auto;
         }
-        
         .url-item {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 10px;
-            margin-bottom: 8px;
-            background: white;
-            border-radius: 6px;
-            border: 1px solid rgba(102, 126, 234, 0.2);
+            padding: 7px;
+            margin-bottom: 4px;
+            background: #fff;
+            border-radius: 5px;
+            border: 1px solid #e5e7eb;
         }
-        
         .url-text {
             font-family: 'Monaco', 'Menlo', monospace;
-            font-size: 0.8rem;
-            color: #4a5568;
+            font-size: 0.9rem;
+            color: #374151;
             word-break: break-all;
             flex: 1;
-            margin-right: 10px;
+            margin-right: 7px;
         }
-        
         .copy-btn-small {
-            background: linear-gradient(135deg, #38b2ac 0%, #319795 100%);
-            color: white;
-            padding: 6px 12px;
+            background: #10b981;
+            color: #fff;
+            padding: 5px 10px;
             border: none;
             border-radius: 4px;
             cursor: pointer;
-            font-size: 0.8rem;
+            font-size: 0.85rem;
             font-weight: 500;
         }
-        
         .error-details {
-            background: rgba(245, 101, 101, 0.1);
-            padding: 15px;
-            border-radius: 8px;
-            margin: 15px 0;
-            border: 1px solid rgba(245, 101, 101, 0.3);
+            background: #fff0f0;
+            padding: 10px;
+            border-radius: 7px;
+            margin: 10px 0;
+            border: 1px solid #fbb6b6;
         }
-        
         .error-details h4 {
             color: #c53030;
-            margin-bottom: 10px;
+            margin-bottom: 7px;
         }
-        
         .error-details ul {
             list-style: none;
             padding: 0;
         }
-        
         .error-details li {
             color: #c53030;
-            padding: 5px 0;
-            border-bottom: 1px solid rgba(245, 101, 101, 0.2);
+            padding: 3px 0;
+            border-bottom: 1px solid #fbb6b6;
         }
-        
         .error-details li:last-child {
             border-bottom: none;
         }
-        
         .images-section h2 {
-            color: rgba(255, 255, 255, 0.9);
-            margin-bottom: 30px;
-            font-size: 1.8rem;
+            color:rgb(255, 255, 255);
+            margin-bottom: 20px;
+            font-size: 1.3rem;
             font-weight: 600;
-            text-align: center;
+            text-align: left;
             position: relative;
-            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
         }
-        
         .images-section h2::after {
             content: '';
             position: absolute;
-            bottom: -10px;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 60px;
-            height: 4px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            bottom: -7px;
+            left: 0;
+            width: 40px;
+            height: 3px;
+            background: #6366f1;
             border-radius: 2px;
         }
-        
         .image-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-            gap: 25px;
+            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+            gap: 18px;
         }
-        
         .image-item {
-            background: rgba(255, 255, 255, 0.15);
-            backdrop-filter: blur(20px);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            border-radius: 20px;
-            padding: 20px;
+            background: #23272a;
+            border: 1px solid #36393f;
+            border-radius: 12px;
+            padding: 12px 12px 10px 12px;
             text-align: center;
-            transition: all 0.3s ease;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            transition: box-shadow 0.15s, border-color 0.15s, background 0.15s, transform 0.12s;
+            box-shadow: 0 2px 8px 0 rgba(0,0,0,0.10);
+            cursor: pointer;
+            position: relative;
+            overflow: visible;
+            color: #e5e7eb;
         }
-        
-        .image-item:hover {
-            transform: translateY(-8px);
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
-            background: rgba(255, 255, 255, 0.2);
+        .image-item:hover, .image-item.selected {
+            background: #181a1b;
+            border-color: #6366f1;
+            box-shadow: 0 4px 16px 0 rgba(99,102,241,0.18);
+            transform: translateY(-2px) scale(1.01);
         }
-        
+        .image-item.selected::after {
+            display: none;
+        }
         .image-item img {
             max-width: 100%;
-            height: 220px;
+            height: 140px;
             object-fit: cover;
-            border-radius: 12px;
-            margin-bottom: 15px;
-            transition: all 0.3s ease;
-        }
-        
-        .image-item:hover img {
-            transform: scale(1.02);
-        }
-        
-        .image-url {
-            background: rgba(102, 126, 234, 0.1);
-            padding: 12px;
             border-radius: 8px;
+            margin-bottom: 8px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.10);
+            transition: box-shadow 0.15s, transform 0.15s;
+        }
+        .image-item:hover img, .image-item.selected img {
+            box-shadow: 0 2px 8px rgba(99,102,241,0.18);
+            transform: scale(1.01);
+        }
+        .image-url {
+            background: #181a1b;
+            padding: 8px;
+            border-radius: 6px;
             font-family: 'Monaco', 'Menlo', monospace;
-            font-size: 11px;
+            font-size: 10px;
             word-break: break-all;
-            margin-bottom: 15px;
-            color: #4a5568;
-            border: 1px solid rgba(102, 126, 234, 0.2);
+            margin-bottom: 10px;
+            color: #e5e7eb;
+            border: 1px solid #36393f;
         }
         
         .image-header {
@@ -921,12 +895,12 @@ if (file_exists($uploadDir)) {
             align-items: center;
             margin-bottom: 15px;
             padding-bottom: 10px;
-            border-bottom: 2px solid rgba(102, 126, 234, 0.1);
+            border-bottom: 2px solid #36393f;
         }
         
         .image-title {
             font-weight: 600;
-            color: #2d3748;
+            color: #e5e7eb;
             font-size: 1rem;
             flex: 1;
             text-align: left;
@@ -1152,6 +1126,97 @@ if (file_exists($uploadDir)) {
             font-size: 1.1rem;
         }
         
+        .bulk-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        .bulk-action-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 10px 16px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .bulk-action-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        
+        .bulk-action-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .bulk-action-btn-icon {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 8px 10px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 1.1rem;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 36px;
+            height: 36px;
+        }
+        
+        .bulk-action-btn-icon:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        
+        .bulk-action-btn-icon:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .bulk-delete-btn {
+            background: linear-gradient(135deg, #f56565 0%, #e53e3e 100%) !important;
+        }
+        
+        .select-all-container {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: rgba(255, 255, 255, 0.9);
+            font-weight: 500;
+            cursor: pointer;
+            user-select: none;
+        }
+        
+        .select-all-container input[type="checkbox"] {
+            transform: scale(1.2);
+            cursor: pointer;
+        }
+        
+        .image-checkbox {
+            transform: scale(1.1);
+            cursor: pointer;
+        }
+        
+        .image-item.selected {
+            background: rgba(102, 126, 234, 0.2);
+            border-color: rgba(102, 126, 234, 0.5);
+            transform: translateY(-4px);
+        }
+        
         @media (max-width: 768px) {
             .container {
                 padding: 20px;
@@ -1196,7 +1261,7 @@ if (file_exists($uploadDir)) {
                 <div class="drag-drop-area" id="dragDropArea">
                     <div class="upload-icon">📁</div>
                     <div class="upload-text" id="uploadText">Drag & Drop your images here</div>
-                    <div class="upload-subtext" id="uploadSubtext">or click to browse (JPEG, PNG, GIF, WebP - Max 5MB each)</div>
+                    <div class="upload-subtext" id="uploadSubtext">or click to browse (JPEG, PNG, GIF, WebP - Max 20MB each, 1-100 files)</div>
                     <input type="file" name="images[]" accept="image/*" multiple class="file-input" id="fileInput">
                 </div>
                 
@@ -1264,18 +1329,38 @@ if (file_exists($uploadDir)) {
         
         <!-- Images Section -->
         <div class="images-section">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; flex-wrap: wrap; gap: 15px;">
                 <h2 style="margin: 0;">Uploaded Images</h2>
-                <div class="sort-controls">
-                    <label for="sortBy" style="color: rgba(255, 255, 255, 0.85); font-weight: 500; margin-right: 10px; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);">Sort by:</label>
-                    <select id="sortBy" onchange="sortImages()" style="padding: 8px 12px; border: 2px solid rgba(102, 126, 234, 0.3); border-radius: 6px; background: white; color: #4a5568; font-size: 0.9rem;">
-                        <option value="newest">Newest First</option>
-                        <option value="oldest">Oldest First</option>
-                        <option value="name-asc">Name A-Z</option>
-                        <option value="name-desc">Name Z-A</option>
-                        <option value="size-large">Largest File</option>
-                        <option value="size-small">Smallest File</option>
-                    </select>
+                <div style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
+                    <div class="bulk-actions">
+                        <label class="select-all-container">
+                            <input type="checkbox" id="selectAll" onchange="toggleSelectAll()">
+                            <span class="select-all-text">Select All</span>
+                        </label>
+                        <button onclick="copySelectedUrls()" class="bulk-action-btn-icon" id="copySelectedBtn" disabled title="Copy selected image URLs">
+                            📋
+                        </button>
+                        <button onclick="downloadSelectedUrls()" class="bulk-action-btn-icon" id="downloadSelectedBtn" disabled title="Download selected image URLs">
+                            📥
+                        </button>
+                        <button onclick="downloadSelectedImages()" class="bulk-action-btn-icon" id="downloadImagesBtn" disabled title="Download selected images as ZIP">
+                            💾
+                        </button>
+                        <button onclick="deleteSelectedImages()" class="bulk-action-btn-icon bulk-delete-btn" id="deleteSelectedBtn" disabled title="Delete selected images">
+                            🗑️
+                        </button>
+                    </div>
+                    <div class="sort-controls">
+                        <label for="sortBy" style="color: rgba(255, 255, 255, 0.85); font-weight: 500; margin-right: 10px; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);">Sort by:</label>
+                        <select id="sortBy" onchange="sortImages()" style="padding: 8px 12px; border: 2px solid rgba(102, 126, 234, 0.3); border-radius: 6px; background: white; color: #4a5568; font-size: 0.9rem;">
+                            <option value="newest">Newest First</option>
+                            <option value="oldest">Oldest First</option>
+                            <option value="name-asc">Name A-Z</option>
+                            <option value="name-desc">Name Z-A</option>
+                            <option value="size-large">Largest File</option>
+                            <option value="size-small">Smallest File</option>
+                        </select>
+                    </div>
                 </div>
             </div>
             
@@ -1286,16 +1371,19 @@ if (file_exists($uploadDir)) {
             <?php else: ?>
                 <div class="image-grid" id="imageGrid">
                     <?php foreach ($uploadedImages as $image): ?>
-                        <div class="image-item" id="image-<?php echo md5($image['filename']); ?>">
+                        <div class="image-item" id="image-<?php echo md5($image['filename']); ?>" onclick="toggleCardSelection(event, this)">
                             <div class="image-header">
-                                <div class="image-title" id="title-<?php echo md5($image['filename']); ?>">
-                                    <?php echo htmlspecialchars(pathinfo($image['filename'], PATHINFO_FILENAME)); ?>
+                                <div style="display: flex; align-items: center; gap: 10px; flex: 1;">
+                                    <input type="checkbox" class="image-checkbox" data-filename="<?php echo htmlspecialchars($image['filename']); ?>" data-url="<?php echo htmlspecialchars($image['url']); ?>" onchange="updateBulkActions(); event.stopPropagation();">
+                                    <div class="image-title" id="title-<?php echo md5($image['filename']); ?>">
+                                        <?php echo htmlspecialchars(pathinfo($image['filename'], PATHINFO_FILENAME)); ?>
+                                    </div>
                                 </div>
                                 <div class="image-actions">
-                                    <button onclick="editImageName('<?php echo htmlspecialchars($image['filename']); ?>', '<?php echo md5($image['filename']); ?>')" class="action-btn edit-btn" title="Edit Name">
+                                    <button onclick="event.stopPropagation(); editImageName('<?php echo htmlspecialchars($image['filename']); ?>', '<?php echo md5($image['filename']); ?>')" class="action-btn edit-btn" title="Edit Name">
                                         ✏️
                                     </button>
-                                    <button onclick="deleteImage('<?php echo htmlspecialchars($image['filename']); ?>')" class="action-btn delete-btn" title="Delete Image">
+                                    <button onclick="event.stopPropagation(); deleteImage('<?php echo htmlspecialchars($image['filename']); ?>')" class="action-btn delete-btn" title="Delete Image">
                                         🗑️
                                     </button>
                                 </div>
@@ -1314,10 +1402,10 @@ if (file_exists($uploadDir)) {
                                 </div>
                                 
                                 <div class="image-buttons">
-                                    <button onclick="copyToClipboard('<?php echo htmlspecialchars($image['url']); ?>')" class="copy-btn">
+                                    <button onclick="event.stopPropagation(); copyToClipboard('<?php echo htmlspecialchars($image['url']); ?>')" class="copy-btn">
                                         📋 Copy URL
                                     </button>
-                                    <button onclick="openImageInNewTab('<?php echo htmlspecialchars($image['url']); ?>')" class="view-btn">
+                                    <button onclick="event.stopPropagation(); openImageInNewTab('<?php echo htmlspecialchars($image['url']); ?>')" class="view-btn">
                                         👁️ View
                                     </button>
                                 </div>
@@ -1360,10 +1448,13 @@ if (file_exists($uploadDir)) {
         
         dragDropArea.addEventListener('drop', handleDrop, false);
         fileInput.addEventListener('change', handleFileSelect, false);
-        dragDropArea.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            fileInput.click();
+        
+        // Click event for the drag-drop area to open file dialog
+        dragDropArea.addEventListener('click', function(e) {
+            // Only trigger if we didn't click on the file input itself
+            if (e.target !== fileInput) {
+                fileInput.click();
+            }
         });
         
         function preventDefaults(e) {
@@ -1475,8 +1566,16 @@ if (file_exists($uploadDir)) {
             }
             
             const files = Array.from(fileInput.files);
-            const maxSize = 5 * 1024 * 1024; // 5MB
+            const maxSize = 20 * 1024 * 1024; // 20MB
+            const maxFiles = 100; // Maximum 100 files
             const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+            
+            // Check file count limit
+            if (files.length > maxFiles) {
+                e.preventDefault();
+                showNotification(`Too many files! Maximum ${maxFiles} files allowed at once. You selected ${files.length} files.`, 'error');
+                return;
+            }
             
             for (let file of files) {
                 if (file.size > maxSize) {
@@ -1849,6 +1948,195 @@ if (file_exists($uploadDir)) {
             if (!sizeElement) return 0;
             const sizeText = sizeElement.textContent;
             return parseFloat(sizeText.replace(' KB', ''));
+        }
+        
+        // Bulk image link functions
+        function copyAllImageLinks() {
+            const imageUrls = document.querySelectorAll('.image-url');
+            if (imageUrls.length === 0) {
+                showNotification('No images found to copy!', 'error');
+                return;
+            }
+            
+            const urls = Array.from(imageUrls).map(el => el.textContent.trim()).join('\n');
+            copyToClipboard(urls);
+            showNotification(`Copied ${imageUrls.length} image URLs to clipboard!`, 'success');
+        }
+        
+        function downloadAllImageLinks() {
+            const imageUrls = document.querySelectorAll('.image-url');
+            if (imageUrls.length === 0) {
+                showNotification('No images found to download!', 'error');
+                return;
+            }
+            
+            const urls = Array.from(imageUrls).map(el => el.textContent.trim()).join('\n');
+            const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+            
+            const blob = new Blob([urls], { type: 'text/plain' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = `all-image-links-${timestamp}.txt`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+            
+            showNotification(`Downloaded ${imageUrls.length} image URLs!`, 'success');
+        }
+        
+        // Bulk selection functions
+        function toggleSelectAll() {
+            const selectAllCheckbox = document.getElementById('selectAll');
+            const imageCheckboxes = document.querySelectorAll('.image-checkbox');
+            
+            imageCheckboxes.forEach(checkbox => {
+                checkbox.checked = selectAllCheckbox.checked;
+                updateImageItemSelection(checkbox);
+            });
+            
+            updateBulkActions();
+        }
+        
+        function updateBulkActions() {
+            const selectedCheckboxes = document.querySelectorAll('.image-checkbox:checked');
+            const selectAllCheckbox = document.getElementById('selectAll');
+            const totalCheckboxes = document.querySelectorAll('.image-checkbox');
+            
+            // Update select all checkbox state
+            if (selectedCheckboxes.length === 0) {
+                selectAllCheckbox.checked = false;
+                selectAllCheckbox.indeterminate = false;
+            } else if (selectedCheckboxes.length === totalCheckboxes.length) {
+                selectAllCheckbox.checked = true;
+                selectAllCheckbox.indeterminate = false;
+            } else {
+                selectAllCheckbox.checked = false;
+                selectAllCheckbox.indeterminate = true;
+            }
+            
+            // Update bulk action buttons
+            const hasSelection = selectedCheckboxes.length > 0;
+            document.getElementById('copySelectedBtn').disabled = !hasSelection;
+            document.getElementById('downloadSelectedBtn').disabled = !hasSelection;
+            document.getElementById('downloadImagesBtn').disabled = !hasSelection;
+            document.getElementById('deleteSelectedBtn').disabled = !hasSelection;
+            
+            // Update visual selection for image items
+            document.querySelectorAll('.image-checkbox').forEach(checkbox => {
+                updateImageItemSelection(checkbox);
+            });
+        }
+        
+        function updateImageItemSelection(checkbox) {
+            const imageItem = checkbox.closest('.image-item');
+            if (checkbox.checked) {
+                imageItem.classList.add('selected');
+            } else {
+                imageItem.classList.remove('selected');
+            }
+        }
+        
+        function copySelectedUrls() {
+            const selectedCheckboxes = document.querySelectorAll('.image-checkbox:checked');
+            if (selectedCheckboxes.length === 0) {
+                showNotification('No images selected!', 'error');
+                return;
+            }
+            
+            const urls = Array.from(selectedCheckboxes).map(checkbox => checkbox.dataset.url).join('\n');
+            copyToClipboard(urls);
+            showNotification(`Copied ${selectedCheckboxes.length} selected image URLs!`, 'success');
+        }
+        
+        function downloadSelectedUrls() {
+            const selectedCheckboxes = document.querySelectorAll('.image-checkbox:checked');
+            if (selectedCheckboxes.length === 0) {
+                showNotification('No images selected!', 'error');
+                return;
+            }
+            
+            const urls = Array.from(selectedCheckboxes).map(checkbox => checkbox.dataset.url).join('\n');
+            const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+            
+            const blob = new Blob([urls], { type: 'text/plain' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = `selected-image-urls-${timestamp}.txt`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+            
+            showNotification(`Downloaded ${selectedCheckboxes.length} selected image URLs!`, 'success');
+        }
+        
+        function downloadSelectedImages() {
+            const selectedCheckboxes = document.querySelectorAll('.image-checkbox:checked');
+            if (selectedCheckboxes.length === 0) {
+                showNotification('No images selected!', 'error');
+                return;
+            }
+            
+            showNotification('Image download feature requires server-side ZIP creation. Currently downloading URLs instead.', 'error');
+            downloadSelectedUrls();
+        }
+        
+        function deleteSelectedImages() {
+            const selectedCheckboxes = document.querySelectorAll('.image-checkbox:checked');
+            if (selectedCheckboxes.length === 0) {
+                showNotification('No images selected!', 'error');
+                return;
+            }
+            
+            const filenames = Array.from(selectedCheckboxes).map(checkbox => checkbox.dataset.filename);
+            showBulkDeleteConfirmModal(filenames);
+        }
+        
+        function showBulkDeleteConfirmModal(filenames) {
+            const fileList = filenames.map(name => `• ${name}`).join('<br>');
+            const modal = createModal('bulk-delete-modal confirm-modal', 'Delete Selected Images', `
+                <div class="confirm-icon">🗑️</div>
+                <div class="confirm-message">
+                    Are you sure you want to delete these ${filenames.length} images?<br><br>
+                    <div style="text-align: left; max-height: 200px; overflow-y: auto; background: rgba(0,0,0,0.1); padding: 10px; border-radius: 6px; margin: 10px 0;">
+                        ${fileList}
+                    </div>
+                    <strong>This action cannot be undone.</strong>
+                </div>
+                <div class="modal-footer">
+                    <button class="modal-btn modal-btn-secondary" onclick="closeModal('bulk-delete-modal')">Cancel</button>
+                    <button class="modal-btn modal-btn-primary" style="background: linear-gradient(135deg, #f56565 0%, #e53e3e 100%);" onclick="submitBulkDelete(${JSON.stringify(filenames).replace(/"/g, '&quot;')})">Delete All</button>
+                </div>
+            `);
+        }
+        
+        function submitBulkDelete(filenames) {
+            // Actually submit to server for bulk delete
+            closeModal('bulk-delete-modal');
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.style.display = 'none';
+
+            const bulkDeleteInput = document.createElement('input');
+            bulkDeleteInput.type = 'hidden';
+            bulkDeleteInput.name = 'bulk_delete';
+            bulkDeleteInput.value = '1';
+
+            const filenamesInput = document.createElement('input');
+            filenamesInput.type = 'hidden';
+            filenamesInput.name = 'filenames';
+            filenamesInput.value = JSON.stringify(filenames);
+
+            form.appendChild(bulkDeleteInput);
+            form.appendChild(filenamesInput);
+            document.body.appendChild(form);
+
+            form.submit();
         }
         
         // Reset form after successful upload and redirect to prevent resubmit
